@@ -9,12 +9,13 @@ All notable changes to Neon Snake.
 - Pause and game-over overlays only cover the canvas (controls stay clickable)
 - Stale game-over timer cleared on restart so overlay can't pop over a new game
 - `setMode()` takes effect immediately with per-mode base speed (Classic 120ms, Speed 90ms, No Walls 120ms)
-- Window resize clamps snake/food back into bounds instead of stranding them off-board
+- Window resize keeps the logical board stable during active play and scales the canvas visually on downsizing, preventing segment overlap; board size is recalculated between games
+- Space pauses during gameplay even after controls/D-pad have focus; dialog buttons receive focus and Tab stays within the open dialog
 - Bonus timer is wall-clock based with smooth bar; pauses correctly
 - Normal food no longer spawns on top of bonus food
 - NEW BEST banner only on strict improvement (`score > prevBest`), removed dead `isNewBest`
 - Win state when board fills: golden explosion + YOU WIN screen
-- Double-reverse race fixed by guarding queued direction (`nextDx/nextDy`)
+- Direction guard prevents reversing into the snake while allowing a valid second queued turn
 - rAF accumulator loop replaces `setInterval`/rAF mismatch; full-body interpolation, no head snap
 - HiDPI canvas scaling via `devicePixelRatio`
 - `ctx.roundRect` fallback for older browsers
@@ -24,6 +25,7 @@ All notable changes to Neon Snake.
 - `prefers-reduced-motion` disables background/title/pulse animations
 
 ### Added
+- Responsive height-aware canvas sizing and compact controls for short mobile landscape screens
 - Favicon, Open Graph tags, `noscript` message
 - Dialog roles, `aria-pressed`, `aria-live` score, `:focus-visible` styles, canvas label
 

@@ -104,6 +104,12 @@
             #startScreen h1 { font-size: 36px; letter-spacing: 4px; }
             button { padding: 8px 18px; font-size: 11px; }
         }
+        /* Swipe controls replace the D-pad on short mobile landscape screens. */
+        @media (max-width: 600px) and (max-height: 500px) {
+            #mobileControls { display: none; }
+            #scoreBoard { gap: 12px; margin-bottom: 6px; }
+            #controls { margin-top: 6px; gap: 6px; }
+        }
         @media (min-width: 601px) { #mobileControls { display: none; } }
 
         /* Bonus food timer bar */
@@ -173,14 +179,18 @@
         let TILE_COUNT = 20;
         let CANVAS_SIZE = GRID_SIZE * TILE_COUNT;
         let snake = [], prevSnake = [], food = {}, dx = 0, dy = 0, nextDx = 0, nextDy = 0;
-        const UI_OVERHEAD = 160; // scoreboard + controls + margins, keeps board on-screen in landscape
+        function getUIOverhead() {
+            // Account for the D-pad on mobile portrait; it is hidden in short landscape layouts.
+            return window.innerWidth <= 600 && window.innerHeight > 500 ? 300 : 160;
+        }
         let score = 0, highScore = 0, prevBest = 0;
         let gameSpeed = MODES.classic.baseSpeed, baseSpeed = MODES.classic.baseSpeed, particles = [];
         let gameMode = 'classic', gameStarted = false, isGameOver = false, isPaused = false, isWin = false;
         let foodPulse = 0, deathAnimFrames = 0;
         let bonusFood = null, bonusDuration = 5000, bonusExpiresAt = 0, bonusRemaining = 0, foodEatenCount = 0;
         let soundEnabled = true, audioCtx = null;
-        let acc = 0, lastFrameTime = 0, gameOverTimeoutId = null, deathTimers = [];
+        let acc = 0, lastFrameTime = 0, gameOverTimeoutId = null, deathTimers = [], pendingDeathExplosions = 0;
+        let animationFrameId = null;
         const COLORS = { snakeHead: '#0f0', food: '#f44', foodGlow: '#f00', grid: '#111', background: '#0a0a0a' };
 
         function loadBest() {
@@ -278,29 +288,26 @@
         }
 
         function updateCanvasSize() {
-            const maxSize = Math.min(window.innerWidth - 40, window.innerHeight - UI_OVERHEAD, 600);
-            const oldTileCount = TILE_COUNT;
-            CANVAS_SIZE = Math.floor(Math.max(200, maxSize) / GRID_SIZE) * GRID_SIZE;
-            TILE_COUNT = Math.max(10, CANVAS_SIZE / GRID_SIZE);
+            const maxSize = Math.min(window.innerWidth - 40, window.innerHeight - getUIOverhead(), 600);
+            const newCanvasSize = Math.floor(Math.max(200, maxSize) / GRID_SIZE) * GRID_SIZE;
+            const newTileCount = Math.max(10, newCanvasSize / GRID_SIZE);
+            // On mid-game downsizes, visually scale the existing board instead of changing
+            // its logical grid; this prevents segment overlap while fitting the viewport.
+            if (gameStarted && !isGameOver && newTileCount < TILE_COUNT) {
+                canvas.style.width = newCanvasSize + 'px';
+                canvas.style.height = newCanvasSize + 'px';
+                return;
+            }
+            CANVAS_SIZE = newCanvasSize;
+            TILE_COUNT = newTileCount;
             const dpr = Math.min(2, window.devicePixelRatio || 1);
             canvas.width = CANVAS_SIZE * dpr;
             canvas.height = CANVAS_SIZE * dpr;
             canvas.style.width = CANVAS_SIZE + 'px';
             canvas.style.height = CANVAS_SIZE + 'px';
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            // Clamp entities into new bounds so shrinking the window can't strand them off-board.
-            // Scale positions proportionally on downsize so segments never overlap.
-            if (snake.length && oldTileCount && TILE_COUNT < oldTileCount) {
-                const scale = (TILE_COUNT - 1) / (oldTileCount - 1);
-                snake.forEach(s => {
-                    s.x = Math.min(TILE_COUNT - 1, Math.max(0, Math.round(s.x * scale)));
-                    s.y = Math.min(TILE_COUNT - 1, Math.max(0, Math.round(s.y * scale)));
-                });
-                prevSnake.forEach(s => {
-                    s.x = Math.min(TILE_COUNT - 1, Math.max(0, Math.round(s.x * scale)));
-                    s.y = Math.min(TILE_COUNT - 1, Math.max(0, Math.round(s.y * scale)));
-                });
-            } else if (snake.length) {
+            // Clamp entities into bounds (grows never move them; this is a safety net).
+            if (snake.length) {
                 snake.forEach(s => {
                     s.x = Math.min(Math.max(0, s.x), TILE_COUNT - 1);
                     s.y = Math.min(Math.max(0, s.y), TILE_COUNT - 1);
@@ -325,7 +332,8 @@
         function startGame() {
             initAudio();
             if (gameOverTimeoutId) { clearTimeout(gameOverTimeoutId); gameOverTimeoutId = null; }
-            deathTimers.forEach(t => clearTimeout(t)); deathTimers = [];
+            deathTimers.forEach(t => clearTimeout(t)); deathTimers = []; pendingDeathExplosions = 0;
+            updateCanvasSize(); // Apply any resize deferred during the previous active round.
             document.getElementById('startScreen').classList.add('hidden');
             document.getElementById('gameOverScreen').classList.add('hidden');
             document.getElementById('pauseScreen').classList.add('hidden');
@@ -342,7 +350,7 @@
             updateScore();
             placeFood();
             document.querySelectorAll('button').forEach(b => b.blur());
-            requestAnimationFrame(render);
+            if (animationFrameId === null) animationFrameId = requestAnimationFrame(render);
         }
 
         function update() {
@@ -443,12 +451,14 @@
             else playDieSound();
 
             if (!win) {
+                pendingDeathExplosions = snake.length;
                 snake.forEach((seg, i) => {
                     const cx = seg.x * GRID_SIZE + GRID_SIZE/2;
                     const cy = seg.y * GRID_SIZE + GRID_SIZE/2;
                     const delay = i * 30;
                     deathTimers.push(setTimeout(() => {
                         createExplosion(cx, cy, i === 0 ? '#f00' : '#0f0', i === 0 ? 25 : 8);
+                        pendingDeathExplosions--;
                     }, delay));
                 });
             } else {
@@ -506,7 +516,8 @@
             acc = 0;
             playPauseSound();
             document.getElementById('pauseScreen').classList.add('hidden');
-            requestAnimationFrame(render);
+            if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+            if (animationFrameId === null) animationFrameId = requestAnimationFrame(render);
         }
 
         function togglePause() {
@@ -516,6 +527,7 @@
         }
 
         function render(timestamp) {
+            animationFrameId = null;
             if (!lastFrameTime) lastFrameTime = timestamp;
             let lerpT = 0;
 
@@ -659,8 +671,9 @@
 
             const keepRendering = (gameStarted && !isPaused && !isGameOver)
                                 || particles.length > 0
-                                || deathAnimFrames > 0;
-            if (keepRendering) requestAnimationFrame(render);
+                                || deathAnimFrames > 0
+                                || pendingDeathExplosions > 0;
+            if (keepRendering && animationFrameId === null) animationFrameId = requestAnimationFrame(render);
         }
 
         function setDirection(newDx, newDy) {
@@ -697,8 +710,9 @@
                     focusables[next].focus();
                 }
             }
-            // Let focused buttons handle Space/Enter natively (avoids double-trigger)
-            if (e.target && e.target.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) return;
+            // Let focused dialog buttons handle Space/Enter natively. During gameplay,
+            // Space must still pause even if a D-pad or control button has focus.
+            if (modal && e.target && e.target.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) return;
             if (!gameStarted) {
                 if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); startGame(); }
                 return;
@@ -727,7 +741,7 @@
         let touchStartX = 0, touchStartY = 0;
 
         init();
-        requestAnimationFrame(render);
+        if (animationFrameId === null) animationFrameId = requestAnimationFrame(render);
     </script>
 </body>
 </html>
